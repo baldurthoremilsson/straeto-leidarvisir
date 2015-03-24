@@ -90,26 +90,31 @@ def rest_1_leid():
     lids = request.args.getlist('lid')
     date = request.args.get('datetime', None)
     ferdir = request.args.get('ferdir', 4)
+    offset = request.args.get('offset', 0)
 
     if date == None:
         date = datetime.now()
     else:
         date = datetime.strptime(date, '%Y-%m-%d %H:%M')
 
-    results = defaultdict(lambda: defaultdict(list))
-    for lid, ferd_id, ferdir_start, stod, timi, dag, stnum in provider.leid(lids, date, ferdir):
-        key = datetime(dag.year, dag.month, dag.day, ferdir_start.hour, ferdir_start.minute).strftime('%Y-%m-%d %H:%M')
-        results[lid][key].append((stod,
-            timi.strftime('%H-%M'), dag.strftime('%Y-%m-%d'), stnum))
+    results = defaultdict(list)
+    current_ferd_id = None
+    current_ferd = None
+    for lid, ferd_id, ferdir_index, stod, timi, dag, stnum in provider.leid(lids, date, ferdir, offset):
+        if current_ferd_id != ferd_id:
+            current_ferd_id = ferd_id
+            current_ferd = {
+                'date': dag.strftime('%Y-%m-%d'),
+                'stops': []
+            }
+            results[lid].append(current_ferd)
+        current_ferd['stops'].append({
+            'stod': stod,
+            'time': timi.strftime('%H:%M'),
+            'stopnum': stnum
+        })
 
-    data = defaultdict(list)
-    for lid, ferdir_dict in results.iteritems():
-        keys = ferdir_dict.keys()
-        keys.sort()
-        for key in keys:
-            data[lid].append(ferdir_dict[key])
-
-    return flask.jsonify(data)
+    return flask.jsonify(results)
 
 
 if __name__ == '__main__':

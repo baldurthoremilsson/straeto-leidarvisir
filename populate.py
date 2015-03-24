@@ -3,6 +3,7 @@
 import os
 import psycopg2
 from lxml.etree import parse
+from collections import defaultdict
 
 
 FILEPATHS = {
@@ -65,13 +66,14 @@ def ferlar(filepath, curs):
     print filepath
     tree = parse(filepath)
     ferlar = tree.getroot()
-    ferd = EmptyFerd()
+    ferd = None
     force_store = False
     count = 0
+    ferdir = defaultdict(lambda: defaultdict(list))
+
     for ferill in ferlar:
         for variant in ferill:
             variants = variant.attrib['var'].split(',')
-            force_store = True
             for stop in variant:
                 count += 1
                 if count % 1000 == 0:
@@ -82,15 +84,21 @@ def ferlar(filepath, curs):
                 timi = stop.attrib['timi']
                 stnum = stop.attrib['stnum']
 
-                if stnum == '1' or force_store:
-                    ferd.store(curs)
+                if stnum == '1' or ferd == None:
+                    if ferd:
+                        ferd.record(ferdir)
                     ferd = Ferd(lid, variants)
-                    force_store = False
 
                 ferd.add_stop(stod, timi, stnum)
-            ferd.store(curs)
-            ferd = EmptyFerd()
+            ferd.record(ferdir)
+            ferd = None
     print 'stops', count
+    for lid, variants in ferdir.iteritems():
+        for variant, ff in variants.iteritems():
+            ff.sort()
+            for i, ferd in enumerate(ff, start=1):
+                ferd.store(curs, i)
+
 
 
 class Ferd(object):
@@ -99,6 +107,23 @@ class Ferd(object):
         self.variants = variants
         self.stops = []
 
+    def __lt__(self, other):
+        stopsA = self.stop_dict()
+        stopsB = self.stop_dict()
+        mutual = set(stopsA.keys()) & set(stopsB.keys())
+        if len(mutual) == 0:
+            msg = 'Error comparing %s:%s with %s:%s, no mutual stations'
+            raise Exception(msg, self.lid, str(self.variants), other.lid, str(other.variants))
+        compare = map(lambda stnum: stopsA[stnum] < stopsB[stnum], mutual)
+        if len(set(compare)) != 1:
+            msg = 'Error comparing %s:%s with %s:%s, one is not strictly larger than the other'
+            raise Exception(msg, self.lid, str(self.variants), other.lid, str(other.variants))
+        return compare[0]
+
+    def record(self, ferdir):
+        for variant in self.variants:
+            ferdir[self.lid][variant].append(self)
+
     def add_stop(self, stod, timi, stnum):
         self.stops.append({
             'stod': stod,
@@ -106,18 +131,24 @@ class Ferd(object):
             'stnum': stnum
         })
 
-    def store(self, curs):
+    def stop_dict(self):
+        stops = {}
+        for stop in self.stops:
+            stops[stop['stnum']] = stop
+        return stops
+
+    def store(self, curs, index):
         ferd_start = self.stops[0]['timi']
         ferd_stop = self.stops[-1]['timi']
 
         for variant in self.variants:
-            ferd = self.create_ferd(curs, self.lid, variant, ferd_start, ferd_stop)
+            ferd = self.create_ferd(curs, self.lid, variant, index, ferd_start, ferd_stop)
             for stop in self.stops:
                 self.create_stop(curs, ferd, stop['stod'], stop['timi'], stop['stnum'])
 
-    def create_ferd(self, curs, lid, variant, start, stop):
-        curs.execute('INSERT INTO ferdir(lid, variant, start, stop) VALUES(%s, %s, %s, %s) RETURNING ferdir.id',
-                (lid, variant, start, stop))
+    def create_ferd(self, curs, lid, variant, index, start, stop):
+        curs.execute('INSERT INTO ferdir(lid, variant, index, start, stop) VALUES(%s, %s, %s, %s, %s) RETURNING ferdir.id',
+                (lid, variant, index, start, stop))
         return curs.fetchone()[0]
 
     def create_stop(self, curs, ferd, stod, timi, stnum):

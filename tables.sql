@@ -20,6 +20,7 @@ create table ferdir(
 	id serial primary key,
 	lid int references leidir(lid),
 	variant int not null,
+	index int not null,
 	start time not null,
 	stop time not null
 );

@@ -65,38 +65,40 @@ class Provider(object):
             for row in curs:
                 yield row
 
-    def _ferdir_for_lid(self, lid, datetime, count):
+    def _ferdir_for_lid(self, lid, datetime, count, offset):
         date = datetime.date()
         time = datetime.time()
 
         with self.connection.cursor() as curs:
             curs.execute('''
-                SELECT dagar.dag, ferdir.id
-                FROM ferdir
-                LEFT JOIN dagar ON ferdir.variant = dagar.variant
+                SELECT dagar.dag, ferdir.id, ferdir.index
+                FROM dagar
+                LEFT JOIN ferdir ON dagar.variant = ferdir.variant
                 WHERE ferdir.lid = %s
                 AND (dagar.dag = %s AND ferdir.stop >= %s
                      OR dagar.dag > %s)
-                ORDER BY dagar.dag, ferdir.start
+                ORDER BY dagar.dag, ferdir.index
                 LIMIT %s
-            ''', (lid, date, time, date, count))
+                OFFSET %s
+            ''', (lid, date, time, date, count, offset))
             for row in curs:
                 yield row
 
-    def leid(self, lids, datetime, count):
+    def leid(self, lids, datetime, count, offset):
         date = datetime.date()
         time = datetime.time()
         queries = []
         values = []
 
         for lid in lids:
-            for ferd_date, ferd_id in self._ferdir_for_lid(lid, datetime, count):
+            for ferd_date, ferd_id, ferd_index, in self._ferdir_for_lid(lid, datetime, count, offset):
+                print 'ferd', ferd_date, ferd_id, ferd_index
                 queries.append('''
                 (
                     SELECT
                       %s as lid,
                       stops.ferd as ferd_id,
-                      ferdir.start as ferd_start,
+                      ferdir.index as ferd_index,
                       stops.stod as stod,
                       stops.timi as timi,
                       %s as dag,
@@ -110,9 +112,9 @@ class Provider(object):
                 values.extend([lid, ferd_date, ferd_id])
 
         query = ' UNION '.join(queries)
-        query = 'SELECT lid, ferd_id, ferd_start, stod, timi, dag, stnum FROM ('\
+        query = 'SELECT lid, ferd_id, ferd_index, stod, timi, dag, stnum FROM ('\
                 + query +\
-                ') AS tt ORDER BY lid, dag, ferd_start, stnum'
+                ') AS tt ORDER BY lid, dag, ferd_index, stnum'
         with self.connection.cursor() as curs:
             curs.execute(query, values)
             for row in curs:
